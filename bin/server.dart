@@ -2,28 +2,54 @@ import 'dart:io';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:shelf_static/shelf_static.dart';
 import 'package:dotenv/dotenv.dart';
 
 import '../lib/db.dart';
 import '../lib/club_handler.dart';
 
+Middleware corsMiddleware = (Handler innerHandler) {
+  return (Request request) async {
+    if (request.method == 'OPTIONS') {
+      return Response.ok('', headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Origin, Content-Type, Authorization',
+      });
+    }
+
+    final response = await innerHandler(request);
+    return response.change(headers: {
+      ...response.headers,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, Content-Type, Authorization',
+    });
+  };
+};
+
 Future<void> main() async {
-  // Load environment variables
   DotEnv().load();
+  DB.init();
 
-  // Initialize DB connection
-  await DB.init();
+  final router = Router()
+    ..mount('/clubs', clubRoutes)
+    ..mount('/upload', uploadRoutes);
 
-  // Setup routes
-  final router = Router()..mount('/clubs', clubRoutes);
+  final staticHandler = createStaticHandler(
+    'uploads',
+    serveFilesOutsidePath: true,
+  );
 
-  // Add middleware if needed (like logging, CORS etc.)
+  final cascadeHandler = Cascade().add(staticHandler).add(router).handler;
 
-  // Start server
-  final handler =
-      const Pipeline().addMiddleware(logRequests()).addHandler(router);
+  final handler = Pipeline()
+      .addMiddleware(logRequests())
+      .addMiddleware(corsMiddleware)
+      .addHandler(cascadeHandler);
 
   final port = int.parse(Platform.environment['PORT'] ?? '8080');
   final server = await serve(handler, InternetAddress.anyIPv4, port);
-  print('✅ Server running on http://localhost:${server.port}');
+
+  print('✅ Server running at http://localhost:$port');
 }

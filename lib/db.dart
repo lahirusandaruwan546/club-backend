@@ -1,11 +1,12 @@
 import 'package:mysql1/mysql1.dart';
 import 'package:dotenv/dotenv.dart';
+import 'package:pool/pool.dart';
 
 class DB {
-  static MySqlConnection? _connection;
+  static late ConnectionSettings _settings;
+  static final Pool _pool = Pool(5); // max 5 parallel DB connections
 
-  // Initialize connection
-  static Future<void> init() async {
+  static void init() {
     final env = DotEnv()..load();
 
     final host = env['DB_HOST'];
@@ -15,10 +16,10 @@ class DB {
     final dbName = env['DB_NAME'];
 
     if ([host, port, user, password, dbName].any((e) => e == null)) {
-      throw Exception("❌ Missing required environment variables in .env file");
+      throw Exception("❌ Missing environment variables in .env");
     }
 
-    final settings = ConnectionSettings(
+    _settings = ConnectionSettings(
       host: host!,
       port: int.parse(port!),
       user: user!,
@@ -26,18 +27,18 @@ class DB {
       db: dbName!,
     );
 
-    _connection = await MySqlConnection.connect(settings);
-    print('✅ Connected to MySQL database');
+    print('✅ DB settings loaded');
   }
 
-  static MySqlConnection get connection {
-    if (_connection == null) {
-      throw Exception('Database not initialized. Call DB.init() first.');
-    }
-    return _connection!;
-  }
-
-  static Future<void> close() async {
-    await _connection?.close();
+  static Future<T> run<T>(
+      Future<T> Function(MySqlConnection conn) operation) async {
+    return await _pool.withResource(() async {
+      final conn = await MySqlConnection.connect(_settings);
+      try {
+        return await operation(conn);
+      } finally {
+        await conn.close();
+      }
+    });
   }
 }
